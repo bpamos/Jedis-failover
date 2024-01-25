@@ -37,7 +37,7 @@ public class Main
 {
     public static void main( String[] args )
     {
-        
+        // JedisPooled whimp = (JedisPooled) JedisConnectionHelper.initRedisConnection( args);
         UnifiedJedis connection= (UnifiedJedis) JedisConnectionHelper.initRedisConnection( args); //not pretty
         connection.set("hello","world");
         System.out.println( connection.get("hello"));
@@ -280,7 +280,7 @@ class JedisConnectionHelper {
 
         FailoverReporter reporter = new FailoverReporter();
         provider.setClusterFailoverPostProcessor(reporter);
-        
+
         this.unifiedJedis = new UnifiedJedis(provider);
 
         this.connectionProvider = null;
