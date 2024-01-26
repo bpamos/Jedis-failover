@@ -33,7 +33,7 @@
     <dependency>
       <groupId>redis.clients</groupId>
       <artifactId>jedis</artifactId>
-      <version>5.1.0-SNAPSHOT</version>
+      <version>5.1.0</version>
     </dependency>
 
   <!-- circuit breaker / failover -->
@@ -54,6 +54,11 @@
 			<artifactId>resilience4j-retry</artifactId>
 			<version>1.7.1</version>
 			<optional>true</optional>
+		</dependency>
+    <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>1.7.36</version>
 		</dependency>
 	</dependencies>
 </project>

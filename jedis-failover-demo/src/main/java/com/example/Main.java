@@ -25,33 +25,55 @@ import redis.clients.jedis.providers.MultiClusterPooledConnectionProvider;
 import redis.clients.jedis.MultiClusterClientConfig;
 import redis.clients.jedis.MultiClusterClientConfig.ClusterConfig;
 import redis.clients.jedis.UnifiedJedis;
+import redis.clients.jedis.MultiClusterClientConfig.Builder;
 
 import java.util.function.Consumer;
 
 /**
  * Hello world!
- *mvn compile exec:java -Dexec.cleanupDaemonThreads=false -Dexec.args="--host url --port 10000 --password"
+ You can run this program either with --failover true AND the full set of args:
+ ie: --host xxx and --host2 yyy etc...  or you can leave out the --failover argument and only
+ connect to a single Redis database
+ mvn compile exec:java -Dexec.cleanupDaemonThreads=false -Dexec.args="--host FIXME --port FIXME --password FIXME"
  mvn compile exec:java -Dexec.cleanupDaemonThreads=false -Dexec.args="--host redis-12001.bamos1-tf-us-west-2-cluster.redisdemo.com --port 12001"
+
+ below is an example of providing the args for a failover scenario:
+ mvn compile exec:java -Dexec.cleanupDaemonThreads=false -Dexec.args="--failover true --host FIXME --port FIXME --password FIXME --host2 FIXME --port2 FIXME --password2 FIXME"
+
  */
 public class Main 
 {
     public static void main( String[] args )
     {
-        // JedisPooled whimp = (JedisPooled) JedisConnectionHelper.initRedisConnection( args);
-        UnifiedJedis connection= (UnifiedJedis) JedisConnectionHelper.initRedisConnection( args); //not pretty
+        /**
+         Only UnifiedJedis allows for auto-failover behaviors
+         If --failover true is NOT passed in, a JedisPooled will be created
+         ^ this is good, and allows for the best pooled connection management while also allowing
+         the creation of the failover-capable UnifiedJedis when that is desired
+        **/
+        UnifiedJedis connection= JedisConnectionHelper.initRedisConnection(args);
         connection.set("hello","world");
         System.out.println( connection.get("hello"));
-        System.out.println( connection);
+        System.out.println( connection.toString());
         System.out.println("Starting Failover Test, writing to first cluster");
-
-        for (int x = 0; x<100; x++){
-            connection.set(connection+":",connection+":"+x);
-            System.out.println( connection.get(connection+":"));
-
-            try {
-                Thread.sleep(2000);
-            } catch(Throwable t) {
-                t.printStackTrace();
+        
+        //public ZRangeParams(double min, double max) <-- byscore is implicit with this constructor
+        double min = 0; double max = 5000;
+        redis.clients.jedis.params.ZRangeParams params = null;
+        
+        for (int x = 1; x<101; x++){
+            try{
+                min = x;
+                params = new redis.clients.jedis.params.ZRangeParams(min,max);
+                connection.zadd(connection+":key",x,connection+":"+x);
+                System.out.println( connection.zrange(connection+":key",params));
+                try {
+                    Thread.sleep(2000);
+                } catch(Throwable t) {
+                    t.printStackTrace();
+                }
+            }catch(Throwable ste){
+                ste.printStackTrace();
             }
         }
     }
@@ -62,7 +84,7 @@ class JedisConnectionHelper {
     final JedisPooled jedisPooled;
     final UnifiedJedis unifiedJedis;
     //connection establishment
-    static Object initRedisConnection(String[] args){
+    static UnifiedJedis initRedisConnection(String[] args){
         boolean isFailover = false;
         JedisConnectionHelperSettings settings = new JedisConnectionHelperSettings();
         JedisConnectionHelperSettings settings2 = null; // in case we are failing over
@@ -134,20 +156,20 @@ class JedisConnectionHelper {
             settings2 = new JedisConnectionHelperSettings();
             if (argList.contains("--host2")) {
                 int argIndex = argList.indexOf("--host2");
-                settings.setRedisHost(argList.get(argIndex + 1));
+                settings2.setRedisHost(argList.get(argIndex + 1));
             }
             if (argList.contains("--port2")) {
                 int argIndex = argList.indexOf("--port2");
-                settings.setRedisPort(Integer.parseInt(argList.get(argIndex + 1)));
+                settings2.setRedisPort(Integer.parseInt(argList.get(argIndex + 1)));
             }
             if (argList.contains("--user2")) {
                 int argIndex = argList.indexOf("--user2");
-                settings.setUserName(argList.get(argIndex + 1));
+                settings2.setUserName(argList.get(argIndex + 1));
             }
             if (argList.contains("--password2")) {
                 int argIndex = argList.indexOf("--password2");
-                settings.setPassword(argList.get(argIndex + 1));
-                settings.setUsePassword(true);
+                settings2.setPassword(argList.get(argIndex + 1));
+                settings2.setUsePassword(true);
             }
             JedisConnectionHelper failoverHelper = null;
             try{
@@ -178,7 +200,7 @@ class JedisConnectionHelper {
                 // only use a single connection based on the hostname (not ipaddress) if possible
                 connectionHelper = new JedisConnectionHelper(settings);
             }
-            return connectionHelper.getPooledJedis();
+            return (UnifiedJedis) connectionHelper.getPooledJedis();
         }
     }
 
@@ -267,19 +289,20 @@ class JedisConnectionHelper {
         JedisClientConfig config = DefaultJedisClientConfig.builder().user(bs.getUserName()).password(bs.getPassword()).build();
         JedisClientConfig config2 = DefaultJedisClientConfig.builder().user(bs2.getUserName()).password(bs2.getPassword()).build();
 
-        ClusterConfig[] clientConfigs = new ClusterConfig[2];
-        clientConfigs[0] = new ClusterConfig(new HostAndPort(bs.getRedisHost(), bs.getRedisPort()), config);
-        clientConfigs[1] = new ClusterConfig(new HostAndPort(bs2.getRedisHost(), bs2.getRedisPort()), config2);
+        redis.clients.jedis.MultiClusterClientConfig.ClusterConfig[] clientConfigs = new redis.clients.jedis.MultiClusterClientConfig.ClusterConfig[2];
+        clientConfigs[0] = new redis.clients.jedis.MultiClusterClientConfig.ClusterConfig(new HostAndPort(bs.getRedisHost(), bs.getRedisPort()), config);
+        clientConfigs[1] = new redis.clients.jedis.MultiClusterClientConfig.ClusterConfig(new HostAndPort(bs2.getRedisHost(), bs2.getRedisPort()), config2);
         
-        MultiClusterClientConfig.Builder builder = new MultiClusterClientConfig.Builder(clientConfigs);
-        builder.circuitBreakerSlidingWindowSize(10);
+        Builder builder = new Builder(clientConfigs);
+        builder.circuitBreakerSlidingWindowSize(1);
         builder.circuitBreakerSlidingWindowMinCalls(1);
         builder.circuitBreakerFailureRateThreshold(50.0f);
+        builder.retryMaxAttempts(1);
 
         MultiClusterPooledConnectionProvider provider = new MultiClusterPooledConnectionProvider(builder.build());
-
         FailoverReporter reporter = new FailoverReporter();
         provider.setClusterFailoverPostProcessor(reporter);
+        provider.setActiveMultiClusterIndex(1);
 
         this.unifiedJedis = new UnifiedJedis(provider);
 
@@ -582,9 +605,15 @@ class JedisConnectionHelperSettings {
 
 
 class FailoverReporter implements Consumer<String> {
+    String currentClusterName = "not set";
+    
+    public String getCurrentClusterName(){
+        return currentClusterName;
+    }
 
     @Override
     public void accept(String clusterName) {
+        this.currentClusterName=clusterName;
         System.out.println("Jedis failover to cluster: " + clusterName);
     }
 }
